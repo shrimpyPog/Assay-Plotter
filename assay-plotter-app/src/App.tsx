@@ -53,7 +53,7 @@ const App: React.FC = () => {
             const x = parseFloat(cleanRow['Mass (ug)']);
             const std = parseFloat(cleanRow['Std Inhibition%']);
             const rce = parseFloat(cleanRow['RCE inhibition%']);
-            const cae = parseFloat(cleanRow['CAE inhibition%']);
+            const cae = parseFloat(cleanRow['CAE %inhibition']);
 
             if (isNaN(x) || isNaN(std) || isNaN(rce) || isNaN(cae)) {
               return null;
