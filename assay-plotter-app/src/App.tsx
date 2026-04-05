@@ -53,7 +53,7 @@ const App: React.FC = () => {
             const x = parseFloat(cleanRow['Mass (ug)']);
             const std = parseFloat(cleanRow['Std Inhibition%']);
             const rce = parseFloat(cleanRow['RCE inhibition%']);
-            const cae = parseFloat(cleanRow['CAE %inhibition']);
+            const cae = parseFloat(cleanRow['CAE inhibition%']);
 
             if (isNaN(x) || isNaN(std) || isNaN(rce) || isNaN(cae)) {
               return null;
@@ -106,7 +106,7 @@ const App: React.FC = () => {
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <header className="mb-12 border-b border-gray-200 pb-6">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-800">DPPH Assay Analysis</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-800">Assay Results Analysis</h1>
           <p className="text-slate-500 mt-2 italic">Dose-response visualization for 96-well plate assays</p>
         </header>
 
