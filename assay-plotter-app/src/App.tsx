@@ -15,13 +15,17 @@ import { toPng } from 'html-to-image';
 
 interface AssayDataPoint {
   concentration: number;
-  std: number;
-  rce: number;
-  cae: number;
+  [key: string]: number;
 }
+
+const COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#0891b2', '#db2777', '#4f46e5', '#ca8a04', '#0d9488', '#4338ca'];
 
 const App: React.FC = () => {
   const [data, setData] = useState<AssayDataPoint[]>([]);
+  const [columns, setColumns] = useState<string[]>([]);
+  const [stdColumn, setStdColumn] = useState<string | null>(null);
+  const [sampleColumns, setSampleColumns] = useState<string[]>([]);
+  const [xColumn, setXColumn] = useState<string>('Mass (ug)');
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -42,35 +46,65 @@ const App: React.FC = () => {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
+        if (results.data.length === 0) {
+          setError('The CSV file appears to be empty.');
+          return;
+        }
+
+        // Get all column names from the first row
+        const firstRow = results.data[0] as any;
+        const rawColumns = Object.keys(firstRow).map(k => k.trim());
+        
+        // Find X column (Concentration)
+        const detectedX = rawColumns.find(c => 
+          c.toLowerCase().includes('mass') || 
+          c.toLowerCase().includes('conc') || 
+          c.toLowerCase() === 'x'
+        ) || rawColumns[0];
+
+        // Find Standard column
+        const detectedStd = rawColumns.find(c => 
+          c !== detectedX && (
+            c.toLowerCase().includes('std') || 
+            c.toLowerCase().includes('standard') || 
+            c.toLowerCase().includes('inhibition%')
+          )
+        );
+
+        // All other columns are samples
+        const detectedSamples = rawColumns.filter(c => 
+          c !== detectedX && c !== detectedStd
+        );
+
+        setXColumn(detectedX);
+        setStdColumn(detectedStd || null);
+        setSampleColumns(detectedSamples);
+        setColumns(rawColumns);
+
         const parsedData: AssayDataPoint[] = results.data
           .map((row: any) => {
-            // Clean keys (remove whitespace)
             const cleanRow: any = {};
+            const point: AssayDataPoint = { concentration: 0 };
+            
             Object.keys(row).forEach((key) => {
-              cleanRow[key.trim()] = row[key];
+              const trimmedKey = key.trim();
+              const val = parseFloat(row[key]);
+              if (!isNaN(val)) {
+                if (trimmedKey === detectedX) {
+                  point.concentration = val;
+                } else {
+                  point[trimmedKey] = val;
+                }
+              }
             });
 
-            const x = parseFloat(cleanRow['Mass (ug)']);
-            const std = parseFloat(cleanRow['Std Inhibition%']);
-            const rce = parseFloat(cleanRow['RCE inhibition%']);
-            const cae = parseFloat(cleanRow['CAE %inhibition']);
-
-            if (isNaN(x) || isNaN(std) || isNaN(rce) || isNaN(cae)) {
-              return null;
-            }
-
-            return {
-              concentration: x,
-              std,
-              rce,
-              cae,
-            };
+            return point;
           })
-          .filter((item): item is AssayDataPoint => item !== null)
+          .filter((item) => !isNaN(item.concentration))
           .sort((a, b) => a.concentration - b.concentration);
 
         if (parsedData.length === 0) {
-          setError('No valid data points found. Check column headers: "Mass (ug)", "Std Inhibition%", "RCE inhibition%", "CAE %inhibition"');
+          setError(`No valid data points found. Ensure your CSV has a concentration column and numeric values.`);
         } else {
           setData(parsedData);
         }
@@ -85,6 +119,9 @@ const App: React.FC = () => {
     setData([]);
     setError(null);
     setFileName(null);
+    setColumns([]);
+    setStdColumn(null);
+    setSampleColumns([]);
   };
 
   const handleDownloadPlot = async () => {
@@ -107,7 +144,7 @@ const App: React.FC = () => {
         {/* Header */}
         <header className="mb-12 border-b border-gray-200 pb-6">
           <h1 className="text-3xl font-bold tracking-tight text-slate-800">Assay Results Analysis</h1>
-          <p className="text-slate-500 mt-2 italic">Dose-response visualization for 96-well plate assays</p>
+          <p className="text-slate-500 mt-2 italic">General Dose-response visualization for any number of samples</p>
         </header>
 
         <main>
@@ -118,7 +155,7 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-xl font-semibold mb-2">Upload Assay Results</h2>
               <p className="text-gray-500 text-center max-w-md mb-8">
-                Select a .csv file containing Mass (ug), Std Inhibition%, RCE inhibition%, and CAE %inhibition columns.
+                Select a .csv file containing Concentration and Inhibition% columns for Standard and Samples.
               </p>
               
               <label className="cursor-pointer">
@@ -150,7 +187,7 @@ const App: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="font-medium text-slate-800">{fileName}</h3>
-                    <p className="text-xs text-slate-500">{data.length} data points parsed successfully</p>
+                    <p className="text-xs text-slate-500">{data.length} data points, {sampleColumns.length + (stdColumn ? 1 : 0)} series</p>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -176,61 +213,60 @@ const App: React.FC = () => {
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart
                       data={data}
-                      margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                       <XAxis 
                         dataKey="concentration" 
                         type="number"
-                        label={{ value: 'Concentration (µg)', position: 'insideBottom', offset: -40, style: { fontWeight: 600, fill: '#475569' } }}
+                        label={{ value: xColumn, position: 'insideBottom', offset: -45, style: { fontWeight: 600, fill: '#475569' } }}
                         stroke="#94a3b8"
                         tick={{ fill: '#64748b' }}
                       />
                       <YAxis 
-                        label={{ value: '% Inhibition', angle: -90, position: 'insideLeft', offset: 0, style: { fontWeight: 600, fill: '#475569' } }}
+                        label={{ value: 'Inhibition (%)', angle: -90, position: 'insideLeft', offset: 0, style: { fontWeight: 600, fill: '#475569' } }}
                         domain={[0, 100]}
                         stroke="#94a3b8"
                         tick={{ fill: '#64748b' }}
                       />
                       <Tooltip 
                         contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                        formatter={(value: any) => [`${parseFloat(value).toFixed(2)}%`, '']}
-                        labelFormatter={(label) => `Concentration: ${label} µg`}
+                        formatter={(value: any, name: string) => [`${parseFloat(value).toFixed(2)}%`, name]}
+                        labelFormatter={(label) => `${xColumn}: ${label}`}
                       />
-                      <Legend verticalAlign="top" height={40} />
-                      
-                      {/* Standard - Blue */}
-                      <Line 
-                        type="monotone" 
-                        dataKey="std" 
-                        name="Standard" 
-                        stroke="#2563eb" 
-                        strokeWidth={3}
-                        dot={{ r: 6, fill: '#2563eb' }}
-                        activeDot={{ r: 8 }}
+                      <Legend 
+                        verticalAlign="bottom" 
+                        height={40} 
+                        iconType="circle"
+                        wrapperStyle={{ paddingTop: '30px' }}
                       />
                       
-                      {/* Sample RCE - Red */}
-                      <Line 
-                        type="monotone" 
-                        dataKey="rce" 
-                        name="Sample RCE" 
-                        stroke="#dc2626" 
-                        strokeWidth={3}
-                        dot={{ r: 6, fill: '#dc2626', strokeWidth: 0 }}
-                        activeDot={{ r: 8 }}
-                      />
+                      {/* Standard */}
+                      {stdColumn && (
+                        <Line 
+                          type="monotone" 
+                          dataKey={stdColumn} 
+                          name={`Standard: ${stdColumn}`} 
+                          stroke={COLORS[0]} 
+                          strokeWidth={3}
+                          dot={{ r: 6, fill: COLORS[0] }}
+                          activeDot={{ r: 8 }}
+                        />
+                      )}
                       
-                      {/* Sample CAE - Green */}
-                      <Line 
-                        type="monotone" 
-                        dataKey="cae" 
-                        name="Sample CAE" 
-                        stroke="#16a34a" 
-                        strokeWidth={3}
-                        dot={{ r: 6, fill: '#16a34a' }}
-                        activeDot={{ r: 8 }}
-                      />
+                      {/* Samples */}
+                      {sampleColumns.map((col, idx) => (
+                        <Line 
+                          key={col}
+                          type="monotone" 
+                          dataKey={col} 
+                          name={`Sample: ${col}`} 
+                          stroke={COLORS[(idx + 1) % COLORS.length]} 
+                          strokeWidth={3}
+                          dot={{ r: 6, fill: COLORS[(idx + 1) % COLORS.length], strokeWidth: 0 }}
+                          activeDot={{ r: 8 }}
+                        />
+                      ))}
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -245,19 +281,25 @@ const App: React.FC = () => {
                   <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="bg-white text-slate-500 font-medium">
-                        <th className="px-6 py-3 border-b">Concentration (µg)</th>
-                        <th className="px-6 py-3 border-b text-blue-600">Std Inhibition%</th>
-                        <th className="px-6 py-3 border-b text-red-600">RCE inhibition%</th>
-                        <th className="px-6 py-3 border-b text-green-600">CAE %inhibition</th>
+                        <th className="px-6 py-3 border-b">{xColumn}</th>
+                        {stdColumn && (
+                          <th className="px-6 py-3 border-b" style={{ color: COLORS[0] }}>{stdColumn}</th>
+                        )}
+                        {sampleColumns.map((col, idx) => (
+                          <th key={col} className="px-6 py-3 border-b" style={{ color: COLORS[(idx + 1) % COLORS.length] }}>{col}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {data.map((point, idx) => (
                         <tr key={idx} className="hover:bg-gray-50 transition-colors">
                           <td className="px-6 py-3 font-medium">{point.concentration}</td>
-                          <td className="px-6 py-3">{point.std.toFixed(2)}%</td>
-                          <td className="px-6 py-3">{point.rce.toFixed(2)}%</td>
-                          <td className="px-6 py-3">{point.cae.toFixed(2)}%</td>
+                          {stdColumn && (
+                            <td className="px-6 py-3">{point[stdColumn]?.toFixed(2)}%</td>
+                          )}
+                          {sampleColumns.map((col) => (
+                            <td key={col} className="px-6 py-3">{point[col]?.toFixed(2)}%</td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>
