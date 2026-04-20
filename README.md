@@ -5,13 +5,14 @@ This repository contains tools for visualizing various biochemical assay results
 ## Project Structure
 - `assay_plotter.py`: Executable Python script for generating plots.
 - `assay_plotter.ipynb`: Jupyter Notebook for interactive analysis.
-- `assay_results.csv`: Sample data file (contains columns for Standard, RCE, and CAE).
+- `assay_results.csv`: Sample data file (Vertical format).
+- `HRBC Job.csv`: Sample data file (Horizontal/Compound-based format).
 - `requirements.txt`: Python dependencies.
 
 ## Supported Assay Types
-This tool is generalized for any assay that measures inhibition, activity, or concentration across different mass/volume points, including:
+This tool is generalized for any assay that measures inhibition, activity, or concentration across different points, including:
 - **Antioxidant Assays**: DPPH, ABTS, FRAP, etc.
-- **Enzyme Inhibition Assays**: Alpha-Glucosidase, Lipase, Tyrosinase, etc.
+- **Enzyme Inhibition Assays**: Alpha-Glucosidase, Lipase, Tyrosinase, HRBC, etc.
 - **Cytotoxicity Assays**: MTT, XTT, etc.
 
 ## Setup
@@ -22,23 +23,34 @@ This tool is generalized for any assay that measures inhibition, activity, or co
    ```
 
 ## Usage
-### Running in Jupyter (Recommended)
-Open `assay_plotter.ipynb` and run the cells sequentially. This allows for real-time adjustments to labels and styles.
-
 ### Running the Python Script
-To generate the plot directly from your terminal:
+The script automatically detects the data format and can be run with optional arguments:
 ```bash
+# Default (uses assay_results.csv)
 python assay_plotter.py
+
+# Custom input (output will be auto-named)
+python assay_plotter.py "HRBC Job.csv"
+
+# Custom input and output
+python assay_plotter.py "data.csv" "my_plot.png"
 ```
 
-## Data Format
-The CSV should contain the following columns (default configuration):
-- `Mass (ug)`: X-axis values (Concentration/Mass).
-- `Std Inhibition%`: Y-axis values for the Standard.
-- `RCE inhibition%`: Y-axis values for Sample RCE.
-- `CAE %inhibition`: Y-axis values for Sample CAE.
+### Running in Jupyter
+Open `assay_plotter.ipynb` and run the cells. It now includes logic to handle both standard vertical layouts and compound-based horizontal layouts.
 
-*Note: You can easily map different column names within the configuration section of the script or notebook.*
+## Supported Data Formats
+The tool supports two primary CSV structures:
+
+### 1. Vertical Format (Standard)
+Columns represent different samples/standards:
+- `Mass (ug)` or concentration on the X-axis.
+- Columns like `Std Inhibition%`, `RCE inhibition%`, etc., as Y-axis series.
+
+### 2. Horizontal Format (Compound-based)
+Rows represent different compounds:
+- A `Compound` column for sample names.
+- Columns named by concentration (e.g., `125 µM (%)`, `250 µM (%)`) as X-axis points.
 
 ## Output
-- `assay_plot.png`: A 300 DPI high-resolution image file suitable for publication.
+- `[filename]_plot.png`: A 300 DPI high-resolution image file suitable for publication.
