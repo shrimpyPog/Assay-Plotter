@@ -18,7 +18,6 @@ def calculate_ic50(x_data, y_data):
         p0 = [min(y_data), 1, np.median(x_data), max(y_data)]
         popt, _ = curve_fit(logistic4, x_data, y_data, p0=p0, maxfev=20000)
         a, b, c, d = popt
-        # Solve for x where y = 50
         if (a-d) != 0:
             val = (a - d) / (50 - d) - 1
             if val > 0:
@@ -30,8 +29,7 @@ def calculate_ic50(x_data, y_data):
 
 def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
     """
-    Generates a line-and-scatter plot with IC50 analysis.
-    Ensures high visibility of reference lines.
+    Generates a line-and-scatter plot with highly visible IC50 analysis.
     """
     if output_path is None:
         base_name = os.path.splitext(csv_path)[0]
@@ -49,14 +47,15 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
     df.columns = df.columns.str.strip()
     df = df.dropna(how='all').dropna(axis=1, how='all')
 
-    # Color Palette (Avoiding restricted colors)
+    # Palette excluding restricted colors
     custom_colors = ['#FF8C00', '#00CED1', '#FF1493', '#000000', '#FF4500', '#008B8B']
     
     sns.set_theme(style="whitegrid", font_scale=1.2)
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     ic50_results = []
-    y_min, y_max = -5, 110
+    y_limit_bottom = -10
+    y_limit_top = 110
 
     try:
         if 'Compound' in df.columns:
@@ -67,15 +66,14 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
             for i, (_, row) in enumerate(df.iterrows()):
                 name = str(row['Compound']).strip()
                 if not name or name == 'nan': continue
-                
                 y_val = row[value_cols].values.astype(float)
                 color = custom_colors[i % len(custom_colors)]
                 
                 ic50, popt = calculate_ic50(x_numeric, y_val)
-                ax.scatter(x_numeric, y_val, color=color, s=80, edgecolors='white', zorder=5)
+                ax.scatter(x_numeric, y_val, color=color, s=100, edgecolors='white', zorder=5)
                 
                 if popt is not None:
-                    ax.plot(x_smooth, logistic4(x_smooth, *popt), color=color, label=name, linewidth=2.5, zorder=4)
+                    ax.plot(x_smooth, logistic4(x_smooth, *popt), color=color, label=name, linewidth=3, zorder=4)
                     if ic50 and min(x_numeric) <= ic50 <= max(x_numeric):
                         ic50_results.append((name, ic50, color))
                 else:
@@ -84,7 +82,6 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
                         ax.plot(x_smooth, spline(x_smooth), color=color, label=name, linewidth=2, alpha=0.7, zorder=4)
                     except:
                         ax.plot(x_numeric, y_val, color=color, label=name, linewidth=2, alpha=0.7, zorder=4)
-            
             plt.xlabel('Concentration', fontweight='bold')
             
         elif 'Mass (ug)' in df.columns:
@@ -97,12 +94,11 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
                 if col in df.columns:
                     y_data = df[col].values
                     color = custom_colors[i % len(custom_colors)]
-                    
                     ic50, popt = calculate_ic50(x_data, y_data)
-                    ax.scatter(x_data, y_data, color=color, s=80, edgecolors='white', zorder=5)
+                    ax.scatter(x_data, y_data, color=color, s=100, edgecolors='white', zorder=5)
                     
                     if popt is not None:
-                        ax.plot(x_smooth, logistic4(x_smooth, *popt), color=color, label=label, linewidth=2.5, zorder=4)
+                        ax.plot(x_smooth, logistic4(x_smooth, *popt), color=color, label=label, linewidth=3, zorder=4)
                         if ic50 and min(x_data) <= ic50 <= max(x_data):
                             ic50_results.append((label, ic50, color))
                     else:
@@ -111,36 +107,35 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
                             ax.plot(x_smooth, spline(x_smooth), color=color, label=label, linewidth=2, alpha=0.7, zorder=4)
                         except:
                             ax.plot(x_data, y_data, color=color, label=label, linewidth=2, alpha=0.7, zorder=4)
-            
             plt.xlabel('Concentration (µg)', fontweight='bold')
 
-        # REFERENCE LINES - HIGH VISIBILITY
-        # Horizontal 50% line
-        ax.axhline(50, color='black', linestyle='--', linewidth=1, alpha=0.4, zorder=1)
-        ax.text(ax.get_xlim()[0], 51, ' 50%', color='black', alpha=0.6, fontsize=10, fontweight='bold')
-
-        # Vertical IC50 lines using absolute data coordinates
+        # ENHANCED VISIBILITY FOR IC50 LINES
+        ax.axhline(50, color='black', linestyle='--', linewidth=1.5, alpha=0.5, zorder=1)
+        
         for name, ic50, color in ic50_results:
-            ax.plot([ic50, ic50], [y_min, 50], color=color, linestyle=':', linewidth=2, alpha=1, zorder=6)
-            ax.plot(ic50, 50, marker='o', color='white', markeredgecolor=color, markersize=8, zorder=7)
+            # Draw vertical dashed line (highly visible)
+            ax.vlines(x=ic50, ymin=y_limit_bottom, ymax=50, colors=color, linestyles='--', linewidth=2.5, zorder=6)
+            # Intersection point marker
+            ax.plot(ic50, 50, marker='o', color='white', markeredgecolor=color, markersize=10, markeredgewidth=2, zorder=7)
+            # X-axis label for the IC50 value
+            ax.text(ic50, y_limit_bottom + 2, f'{ic50:.1f}', color=color, fontweight='bold', 
+                    ha='center', va='bottom', fontsize=10, bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1))
 
-        # Summary Panel
+        # Summary Table
         if ic50_results:
-            summary = "Calculated IC50:\n" + "\n".join([f"{n}: {ic:.2f}" for n, ic, c in ic50_results])
-            ax.text(0.98, 0.02, summary, transform=ax.transAxes, fontsize=11, fontweight='bold',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='lightgrey'),
+            summary = "IC50 Values:\n" + "\n".join([f"{n}: {ic:.2f}" for n, ic, c in ic50_results])
+            ax.text(0.98, 0.02, summary, transform=ax.transAxes, fontsize=12, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='darkgrey'),
                     verticalalignment='bottom', horizontalalignment='right', family='monospace')
 
-        # Legend: Outside
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True, shadow=True, borderpad=1)
-        
         plt.ylabel('% Inhibition', fontweight='bold')
-        plt.title('Assay Dose-Response Analysis', fontweight='bold', pad=20)
-        plt.ylim(y_min, y_max)
+        plt.title('Assay Dose-Response Analysis', fontweight='bold', pad=25, fontsize=16)
+        plt.ylim(y_limit_bottom, y_limit_top)
         
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        print(f"Successfully saved plot to {output_path}")
+        print(f"High-visibility plot saved to {output_path}")
 
     except Exception as e:
         print(f"Plotting error: {e}")
