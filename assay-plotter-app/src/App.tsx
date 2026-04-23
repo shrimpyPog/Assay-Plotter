@@ -8,9 +8,11 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ComposedChart
+  ComposedChart,
+  ReferenceLine,
+  Label
 } from 'recharts';
-import { Upload, RefreshCcw, FileText, AlertCircle, Download, Info } from 'lucide-react';
+import { Upload, RefreshCcw, FileText, AlertCircle, Download, Info, Target } from 'lucide-react';
 import { toPng } from 'html-to-image';
 
 const COLORS = [
@@ -24,9 +26,38 @@ const extractNumber = (str: string): number | null => {
   return match ? parseFloat(match[1]) : null;
 };
 
+/**
+ * Calculates IC50 using linear interpolation between points
+ */
+const calculateIC50 = (data: any[], xKey: string, yKey: string): number | null => {
+  // Sort data by concentration
+  const sorted = [...data].sort((a, b) => a[xKey] - b[xKey]);
+  
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const p1 = sorted[i];
+    const p2 = sorted[i + 1];
+    
+    const x1 = p1[xKey];
+    const y1 = p1[yKey];
+    const x2 = p2[xKey];
+    const y2 = p2[yKey];
+    
+    // Check if 50% lies between y1 and y2
+    if ((y1 <= 50 && y2 >= 50) || (y1 >= 50 && y2 <= 50)) {
+      if (y1 === y2) return x1;
+      // Linear interpolation formula: x = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+      const ic50 = x1 + (50 - y1) * (x2 - x1) / (y2 - y1);
+      return ic50;
+    }
+  }
+  
+  return null;
+};
+
 const App: React.FC = () => {
   const [data, setData] = useState<any[]>([]);
   const [series, setSeries] = useState<string[]>([]);
+  const [ic50Values, setIc50Values] = useState<Record<string, number | null>>({});
   const [xAxisKey, setXAxisKey] = useState<string>('concentration');
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -73,14 +104,13 @@ const App: React.FC = () => {
         let finalXKey = 'concentration';
 
         if (horizontalKey) {
-          // Horizontal / Compound-based Format
           setIsHorizontal(true);
           const valueHeaders = headers.filter(h => h !== horizontalKey);
           const concentrationMap = new Map<number, any>();
           const seriesNames: string[] = [];
 
           cleanedData.forEach(row => {
-            const sampleName = row[horizontalKey]?.toString().strip?.() || row[horizontalKey];
+            const sampleName = row[horizontalKey]?.toString() || 'Unknown';
             if (!sampleName || sampleName === 'null') return;
             seriesNames.push(sampleName);
 
@@ -101,7 +131,6 @@ const App: React.FC = () => {
           finalData = Array.from(concentrationMap.values()).sort((a, b) => a[finalXKey] - b[finalXKey]);
           finalSeries = seriesNames;
         } else {
-          // Vertical / Standard Format
           setIsHorizontal(false);
           finalXKey = headers.find(h => 
             ['mass (ug)', 'concentration', 'conc', 'x', 'mass'].includes(h.toLowerCase())
@@ -123,9 +152,16 @@ const App: React.FC = () => {
         if (finalData.length === 0) {
           setError('No valid numerical data found in the CSV.');
         } else {
+          // Calculate IC50s
+          const ics: Record<string, number | null> = {};
+          finalSeries.forEach(s => {
+            ics[s] = calculateIC50(finalData, finalXKey, s);
+          });
+          
           setData(finalData);
           setSeries(finalSeries);
           setXAxisKey(finalXKey);
+          setIc50Values(ics);
         }
       },
       error: (err) => {
@@ -137,6 +173,7 @@ const App: React.FC = () => {
   const handleReset = () => {
     setData([]);
     setSeries([]);
+    setIc50Values({});
     setError(null);
     setFileName(null);
   };
@@ -162,11 +199,11 @@ const App: React.FC = () => {
         <header className="mb-8 border-b border-gray-200 pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-800">Assay Plotter Web</h1>
-            <p className="text-slate-500 mt-1 italic">Professional dose-response curve visualization</p>
+            <p className="text-slate-500 mt-1 italic">Professional dose-response curve visualization & IC50 analysis</p>
           </div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
             <Info size={14} />
-            Supports Vertical & Horizontal CSVs
+            IC50 Lines Enabled
           </div>
         </header>
 
@@ -178,7 +215,7 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-2xl font-bold mb-3 text-slate-800">Upload Your Assay Data</h2>
               <div className="text-gray-500 text-center max-w-lg mb-10 space-y-2">
-                <p>Drag and drop or select a CSV file to visualize your results.</p>
+                <p>Upload a CSV file to generate plots and calculate IC50 values.</p>
                 <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm font-medium">
                   <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-blue-400" /> Standard Vertical</span>
                   <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-400" /> Compound-based</span>
@@ -207,7 +244,7 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-5 rounded-2xl shadow-sm border border-gray-100 gap-4">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-white p-5 rounded-2xl shadow-sm border border-gray-100 gap-4">
                 <div className="flex items-center gap-4">
                   <div className="bg-blue-600 p-3 rounded-xl text-white shadow-blue-200 shadow-lg">
                     <FileText size={24} />
@@ -222,17 +259,22 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-3 w-full sm:w-auto">
+
+                <div className="flex flex-wrap gap-3 w-full lg:w-auto">
+                  <div className="flex-1 lg:flex-none flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-xl border border-amber-100">
+                    <Target size={18} />
+                    <span className="text-sm font-bold">IC50 Mode Active</span>
+                  </div>
                   <button 
                     onClick={handleDownloadPlot}
-                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 text-sm font-bold text-blue-700 hover:text-white transition-all bg-white hover:bg-blue-600 px-5 py-2.5 rounded-xl border-2 border-blue-600 active:scale-95"
+                    className="flex-1 lg:flex-none flex items-center justify-center gap-2 text-sm font-bold text-blue-700 hover:text-white transition-all bg-white hover:bg-blue-600 px-5 py-2.5 rounded-xl border-2 border-blue-600 active:scale-95"
                   >
                     <Download size={18} />
-                    Download PNG
+                    Download Plot
                   </button>
                   <button 
                     onClick={handleReset}
-                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 text-sm font-bold text-slate-600 hover:text-slate-900 transition-all bg-gray-100 hover:bg-gray-200 px-5 py-2.5 rounded-xl active:scale-95"
+                    className="flex-1 lg:flex-none flex items-center justify-center gap-2 text-sm font-bold text-slate-600 hover:text-slate-900 transition-all bg-gray-100 hover:bg-gray-200 px-5 py-2.5 rounded-xl active:scale-95"
                   >
                     <RefreshCcw size={18} />
                     Reset
@@ -240,74 +282,120 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              <div className="bg-white p-6 md:p-10 rounded-3xl shadow-xl border border-gray-100" ref={chartRef}>
-                <div className="h-[550px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart
-                      data={data}
-                      margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis 
-                        dataKey={xAxisKey} 
-                        type="number"
-                        label={{ value: `Concentration (${xAxisKey})`, position: 'insideBottom', offset: -45, style: { fontWeight: 700, fill: '#1e293b', fontSize: 14 } }}
-                        stroke="#cbd5e1"
-                        tick={{ fill: '#64748b', fontWeight: 500 }}
-                        padding={{ left: 20, right: 20 }}
-                      />
-                      <YAxis 
-                        label={{ value: '% Inhibition', angle: -90, position: 'insideLeft', offset: 0, style: { fontWeight: 700, fill: '#1e293b', fontSize: 14 } }}
-                        domain={[0, 110]}
-                        stroke="#cbd5e1"
-                        tick={{ fill: '#64748b', fontWeight: 500 }}
-                      />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', padding: '12px' }}
-                        itemStyle={{ fontWeight: 600, fontSize: '13px' }}
-                        labelStyle={{ fontWeight: 700, marginBottom: '4px', color: '#1e293b' }}
-                        formatter={(value: any) => [`${parseFloat(value).toFixed(2)}%`, '']}
-                        labelFormatter={(label) => `Conc: ${label}`}
-                      />
-                      <Legend 
-                        verticalAlign="top" 
-                        height={60} 
-                        iconType="circle"
-                        wrapperStyle={{ paddingTop: '0px', fontWeight: 600, color: '#334155' }}
-                      />
-                      
-                      {series.map((s, idx) => (
-                        <Line 
-                          key={s}
-                          type="monotone" 
-                          dataKey={s} 
-                          name={s} 
-                          stroke={COLORS[idx % COLORS.length]} 
-                          strokeWidth={3}
-                          dot={{ r: 5, fill: COLORS[idx % COLORS.length], strokeWidth: 2, stroke: '#fff' }}
-                          activeDot={{ r: 8, strokeWidth: 0 }}
-                          animationDuration={1500}
+              <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+                <div className="xl:col-span-3 bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-gray-100" ref={chartRef}>
+                  <div className="h-[500px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart
+                        data={data}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey={xAxisKey} 
+                          type="number"
+                          label={{ value: `Concentration (${xAxisKey})`, position: 'insideBottom', offset: -45, style: { fontWeight: 700, fill: '#1e293b', fontSize: 13 } }}
+                          stroke="#cbd5e1"
+                          tick={{ fill: '#64748b', fontWeight: 500 }}
                         />
+                        <YAxis 
+                          label={{ value: '% Inhibition', angle: -90, position: 'insideLeft', offset: 0, style: { fontWeight: 700, fill: '#1e293b', fontSize: 13 } }}
+                          domain={[0, 110]}
+                          stroke="#cbd5e1"
+                          tick={{ fill: '#64748b', fontWeight: 500 }}
+                        />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', padding: '12px' }}
+                          itemStyle={{ fontWeight: 600, fontSize: '13px' }}
+                          labelStyle={{ fontWeight: 700, marginBottom: '4px', color: '#1e293b' }}
+                          formatter={(value: any) => [`${parseFloat(value).toFixed(2)}%`, '']}
+                        />
+                        <Legend verticalAlign="top" height={60} iconType="circle" />
+                        
+                        {/* 50% Threshold Line */}
+                        <ReferenceLine y={50} stroke="#475569" strokeDasharray="5 5" strokeWidth={1.5}>
+                          <Label value="50% Inhibition" position="insideTopRight" fill="#64748b" fontSize={11} fontWeight={600} />
+                        </ReferenceLine>
+
+                        {/* IC50 Vertical Lines */}
+                        {series.map((s, idx) => {
+                          const ic50 = ic50Values[s];
+                          if (ic50 === null) return null;
+                          return (
+                            <ReferenceLine 
+                              key={`ref-${s}`}
+                              x={ic50} 
+                              stroke={COLORS[idx % COLORS.length]} 
+                              strokeDasharray="3 3" 
+                              strokeWidth={2}
+                            />
+                          );
+                        })}
+                        
+                        {series.map((s, idx) => (
+                          <Line 
+                            key={s}
+                            type="monotone" 
+                            dataKey={s} 
+                            name={s} 
+                            stroke={COLORS[idx % COLORS.length]} 
+                            strokeWidth={3}
+                            dot={{ r: 5, fill: COLORS[idx % COLORS.length], strokeWidth: 2, stroke: '#fff' }}
+                            activeDot={{ r: 7 }}
+                            animationDuration={1500}
+                          />
+                        ))}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="xl:col-span-1 space-y-6">
+                  <div className="bg-white p-6 rounded-3xl shadow-lg border border-gray-100">
+                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 border-b pb-3">
+                      <Target className="text-blue-600" size={20} />
+                      Calculated IC50
+                    </h3>
+                    <div className="space-y-4">
+                      {series.map((s, idx) => (
+                        <div key={`ic50-${s}`} className="flex flex-col gap-1">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-bold text-slate-600 truncate max-w-[120px]" title={s}>
+                              {s}
+                            </span>
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${COLORS[idx % COLORS.length]}20`, color: COLORS[idx % COLORS.length] }}>
+                              Series {idx + 1}
+                            </span>
+                          </div>
+                          <div className="text-xl font-black text-slate-800 tabular-nums">
+                            {ic50Values[s] !== null ? ic50Values[s]?.toFixed(2) : 'N/A'}
+                            <span className="text-xs font-bold text-slate-400 ml-1">µg</span>
+                          </div>
+                        </div>
                       ))}
-                    </ComposedChart>
-                  </ResponsiveContainer>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-lg">
+                    <h4 className="text-sm font-bold text-slate-400 mb-2 uppercase tracking-widest">Quick Info</h4>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      IC50 represents the concentration at which 50% inhibition is achieved. Dotted vertical lines on the chart indicate these calculated points for each series.
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              {/* Data Table Summary */}
+              {/* Data Table */}
               <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="px-8 py-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-                  <h3 className="font-bold text-slate-800">Detailed Data Table</h3>
-                  <span className="text-xs font-bold text-slate-400 bg-white border border-gray-200 px-3 py-1 rounded-full">
-                    Scroll horizontally if needed →
-                  </span>
+                  <h3 className="font-bold text-slate-800">Raw Data & Results</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm border-collapse">
                     <thead>
                       <tr className="bg-white text-slate-500 font-bold border-b border-gray-100">
-                        <th className="px-8 py-4 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                          {xAxisKey}
+                        <th className="px-8 py-4 sticky left-0 bg-white">
+                          Concentration
                         </th>
                         {series.map((s, idx) => (
                           <th key={s} className="px-8 py-4" style={{ color: COLORS[idx % COLORS.length] }}>
@@ -319,7 +407,7 @@ const App: React.FC = () => {
                     <tbody className="divide-y divide-gray-50">
                       {data.map((point, pIdx) => (
                         <tr key={pIdx} className="hover:bg-blue-50/30 transition-colors">
-                          <td className="px-8 py-4 font-bold text-slate-700 sticky left-0 bg-white/80 backdrop-blur-sm shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                          <td className="px-8 py-4 font-bold text-slate-700 sticky left-0 bg-white/80 backdrop-blur-sm">
                             {point[xAxisKey]}
                           </td>
                           {series.map((s) => (
@@ -338,7 +426,7 @@ const App: React.FC = () => {
         </main>
 
         <footer className="mt-16 pb-8 text-center text-slate-400 text-sm font-medium">
-          <p>© 2026 AssayPlot Laboratory Tools • Open Source Scientific Visualization</p>
+          <p>© 2026 AssayPlot Laboratory Tools • Academic Use Only</p>
         </footer>
       </div>
     </div>
