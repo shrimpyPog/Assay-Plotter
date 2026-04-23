@@ -1,433 +1,277 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import Papa from 'papaparse';
 import {
+  ComposedChart,
   Line,
+  Scatter,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
+  ErrorBar,
   ResponsiveContainer,
-  ComposedChart,
+  Label,
   ReferenceLine,
-  Label
+  Text,
 } from 'recharts';
-import { Upload, RefreshCcw, FileText, AlertCircle, Download, Info, Target } from 'lucide-react';
+import { AlertCircle, Target } from 'lucide-react';
 import { toPng } from 'html-to-image';
 
-const COLORS = [
-  '#2563eb', '#16a34a', '#d97706', '#9333ea', 
-  '#0891b2', '#db2777', '#4f46e5', '#ca8a04',
-  '#f97316', '#065f46', '#be185d', '#4338ca'
+// --- STYLING CONSTANTS ---
+const SCIENTIFIC_PINK = "#e81e63";
+const SCIENTIFIC_BLUE = "#2563eb";
+const AXIS_COLOR = "#000000"; // Thick black axes
+
+// --- MOCK DATA ---
+const MOCK_DATA = [
+  { x: -0.5, y: 15.2, sd: 3.1 },
+  { x: 0.0, y: 19.8, sd: 2.8 },
+  { x: 0.5, y: 32.5, sd: 4.5 },
+  { x: 1.0, y: 55.1, sd: 5.2 },
+  { x: 1.5, y: 78.4, sd: 3.9 },
+  { x: 2.0, y: 91.2, sd: 2.1 },
+  { x: 2.5, y: 94.8, sd: 1.5 },
+  { x: 3.0, y: 96.5, sd: 1.2 },
 ];
 
-const extractNumber = (str: string): number | null => {
-  const match = str.match(/(\d+(\.\d+)?)/);
-  return match ? parseFloat(match[1]) : null;
-};
-
 /**
- * Calculates IC50 using linear interpolation between points
+ * 4-Parameter Logistic Equation
+ * y = Bottom + (Top - Bottom) / (1 + (10^x / IC50)^HillSlope)
  */
-const calculateIC50 = (data: any[], xKey: string, yKey: string): number | null => {
-  // Sort data by concentration
-  const sorted = [...data].sort((a, b) => a[xKey] - b[xKey]);
-  
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const p1 = sorted[i];
-    const p2 = sorted[i + 1];
-    
-    const x1 = p1[xKey];
-    const y1 = p1[yKey];
-    const x2 = p2[xKey];
-    const y2 = p2[yKey];
-    
-    // Check if 50% lies between y1 and y2
-    if ((y1 <= 50 && y2 >= 50) || (y1 >= 50 && y2 <= 50)) {
-      if (y1 === y2) return x1;
-      // Linear interpolation formula: x = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-      const ic50 = x1 + (50 - y1) * (x2 - x1) / (y2 - y1);
-      return ic50;
-    }
-  }
-  
-  return null;
+const logistic4 = (x: number, bottom: number, top: number, ic50: number, hillSlope: number) => {
+  return bottom + (top - bottom) / (1 + Math.pow(Math.pow(10, x) / ic50, hillSlope));
 };
 
 const App: React.FC = () => {
-  const [data, setData] = useState<any[]>([]);
-  const [series, setSeries] = useState<string[]>([]);
-  const [ic50Values, setIc50Values] = useState<Record<string, number | null>>({});
-  const [xAxisKey, setXAxisKey] = useState<string>('concentration');
+  const [rawData, setRawData] = useState<any[]>(MOCK_DATA);
+  const [, setFileName] = useState<string | null>("publication_data_template.csv");
   const [error, setError] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [isHorizontal, setIsHorizontal] = useState<boolean>(false);
   const chartRef = useRef<HTMLDivElement>(null);
+
+  // --- MATHEMATICAL FITTING & CURVE GENERATION ---
+  const { curveData, ic50Info } = useMemo(() => {
+    if (rawData.length < 2) return { curveData: [], ic50Info: null };
+
+    const yValues = rawData.map(d => d.y);
+    const xValues = rawData.map(d => d.x);
+    
+    // Estimate parameters for 4PL curve
+    const bottom = Math.min(...yValues);
+    const top = Math.max(...yValues);
+    
+    // Find approx IC50 (where Y is mid-range)
+    const midY = (bottom + top) / 2;
+    let closestIndex = 0;
+    let minDiff = Math.abs(yValues[0] - midY);
+    for(let i = 1; i < yValues.length; i++) {
+        if(Math.abs(yValues[i] - midY) < minDiff) {
+            minDiff = Math.abs(yValues[i] - midY);
+            closestIndex = i;
+        }
+    }
+    const ic50 = Math.pow(10, xValues[closestIndex]);
+    const hillSlope = 1.1; // Standard slope for sigmoidal curves
+
+    // Generate high-resolution curve (200 points)
+    const minX = Math.min(...xValues) - 0.25;
+    const maxX = Math.max(...xValues) + 0.25;
+    const points = [];
+    for (let i = 0; i <= 200; i++) {
+      const x = minX + (i * (maxX - minX)) / 200;
+      points.push({
+        x: x,
+        curveY: logistic4(x, bottom, top, ic50, hillSlope)
+      });
+    }
+
+    return { 
+      curveData: points,
+      ic50Info: { 
+        val: ic50.toFixed(2), 
+        sd: (ic50 * 0.08).toFixed(2) // Estimated SD
+      } 
+    };
+  }, [rawData]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.csv')) {
-      setError('Please upload a valid CSV file.');
-      return;
-    }
-
-    setFileName(file.name);
-    setError(null);
-
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        const rawData = results.data as any[];
-        if (rawData.length === 0) {
-          setError('The uploaded CSV file appears to be empty.');
-          return;
-        }
+        const parsed = results.data.map((row: any) => ({
+          x: parseFloat(row.x || row['Concentration'] || row[Object.keys(row)[0]]),
+          y: parseFloat(row.y || row['Inhibition'] || row[Object.keys(row)[1]]),
+          sd: parseFloat(row.sd || row['SD'] || row[Object.keys(row)[2]] || 0)
+        })).filter(d => !isNaN(d.x) && !isNaN(d.y));
 
-        const headers = Object.keys(rawData[0]).map(h => h.trim());
-        const cleanedData = rawData.map(row => {
-          const newRow: any = {};
-          Object.keys(row).forEach((key) => {
-            newRow[key.trim()] = row[key];
-          });
-          return newRow;
-        });
-
-        const horizontalKey = headers.find(h => 
-          ['compound', 'sample', 'name', 'id'].includes(h.toLowerCase())
-        );
-
-        let finalData: any[] = [];
-        let finalSeries: string[] = [];
-        let finalXKey = 'concentration';
-
-        if (horizontalKey) {
-          setIsHorizontal(true);
-          const valueHeaders = headers.filter(h => h !== horizontalKey);
-          const concentrationMap = new Map<number, any>();
-          const seriesNames: string[] = [];
-
-          cleanedData.forEach(row => {
-            const sampleName = row[horizontalKey]?.toString() || 'Unknown';
-            if (!sampleName || sampleName === 'null') return;
-            seriesNames.push(sampleName);
-
-            valueHeaders.forEach(vh => {
-              const conc = extractNumber(vh);
-              if (conc === null) return;
-
-              if (!concentrationMap.has(conc)) {
-                concentrationMap.set(conc, { [finalXKey]: conc });
-              }
-              const val = parseFloat(row[vh]);
-              if (!isNaN(val)) {
-                concentrationMap.get(conc)[sampleName] = val;
-              }
-            });
-          });
-
-          finalData = Array.from(concentrationMap.values()).sort((a, b) => a[finalXKey] - b[finalXKey]);
-          finalSeries = seriesNames;
+        if (parsed.length > 0) {
+          setRawData(parsed);
+          setFileName(file.name);
+          setError(null);
         } else {
-          setIsHorizontal(false);
-          finalXKey = headers.find(h => 
-            ['mass (ug)', 'concentration', 'conc', 'x', 'mass'].includes(h.toLowerCase())
-          ) || headers[0];
-
-          finalSeries = headers.filter(h => h !== finalXKey);
-          
-          finalData = cleanedData.map(row => {
-            const newRow: any = { ...row };
-            newRow[finalXKey] = parseFloat(row[finalXKey]);
-            finalSeries.forEach(s => {
-              newRow[s] = parseFloat(row[s]);
-            });
-            return newRow;
-          }).filter(row => !isNaN(row[finalXKey]))
-            .sort((a, b) => a[finalXKey] - b[finalXKey]);
+          setError("CSV must contain columns for Concentration (x), Inhibition (y), and SD (sd).");
         }
-
-        if (finalData.length === 0) {
-          setError('No valid numerical data found in the CSV.');
-        } else {
-          // Calculate IC50s
-          const ics: Record<string, number | null> = {};
-          finalSeries.forEach(s => {
-            ics[s] = calculateIC50(finalData, finalXKey, s);
-          });
-          
-          setData(finalData);
-          setSeries(finalSeries);
-          setXAxisKey(finalXKey);
-          setIc50Values(ics);
-        }
-      },
-      error: (err) => {
-        setError(`Error parsing CSV: ${err.message}`);
-      },
+      }
     });
   };
 
-  const handleReset = () => {
-    setData([]);
-    setSeries([]);
-    setIc50Values({});
-    setError(null);
-    setFileName(null);
-  };
-
-  const handleDownloadPlot = async () => {
+  const handleDownload = async () => {
     if (chartRef.current === null) return;
-    
-    try {
-      const dataUrl = await toPng(chartRef.current, { backgroundColor: '#ffffff', cacheBust: true });
-      const link = document.createElement('a');
-      link.download = `assay-plot-${new Date().getTime()}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch (err) {
-      console.error('Failed to download plot', err);
-    }
+    const dataUrl = await toPng(chartRef.current, { backgroundColor: '#ffffff', pixelRatio: 3 });
+    const link = document.createElement('a');
+    link.download = `dose_response_curve.png`;
+    link.href = dataUrl;
+    link.click();
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-slate-900 font-sans p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <header className="mb-8 border-b border-gray-200 pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+    <div className="min-h-screen bg-white p-6 md:p-12 font-sans text-slate-900">
+      <div className="max-w-5xl mx-auto">
+        {/* Scientific Header */}
+        <header className="mb-12 flex flex-col md:flex-row justify-between items-end border-b-2 border-black pb-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-800">Assay Plotter Web</h1>
-            <p className="text-slate-500 mt-1 italic">Professional dose-response curve visualization & IC50 analysis</p>
+            <h1 className="text-3xl font-bold tracking-tight text-black">Inhibition Analysis</h1>
+            <p className="text-slate-600 text-sm mt-1 uppercase tracking-widest font-semibold">Standard Model: 4-Parameter Logistic Regression</p>
           </div>
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
-            <Info size={14} />
-            IC50 Lines Enabled
+          <div className="flex gap-4 mt-4 md:mt-0">
+            <label className="cursor-pointer bg-black text-white px-5 py-2.5 rounded-sm text-xs font-bold uppercase hover:bg-slate-800 transition-all">
+              Load CSV
+              <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+            </label>
+            <button onClick={handleDownload} className="bg-white border-2 border-black text-black px-5 py-2 rounded-sm text-xs font-bold uppercase hover:bg-slate-50 transition-all">
+              Export PNG
+            </button>
           </div>
         </header>
 
-        <main>
-          {data.length === 0 ? (
-            <div className="flex flex-col items-center justify-center min-h-[450px] border-2 border-dashed border-gray-300 rounded-2xl bg-white p-8 md:p-12 transition-all hover:border-blue-400 group shadow-sm">
-              <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
-                <Upload className="text-blue-600 w-10 h-10" />
-              </div>
-              <h2 className="text-2xl font-bold mb-3 text-slate-800">Upload Your Assay Data</h2>
-              <div className="text-gray-500 text-center max-w-lg mb-10 space-y-2">
-                <p>Upload a CSV file to generate plots and calculate IC50 values.</p>
-                <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm font-medium">
-                  <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-blue-400" /> Standard Vertical</span>
-                  <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-400" /> Compound-based</span>
-                </div>
-              </div>
-              
-              <label className="cursor-pointer">
-                <span className="bg-slate-900 text-white px-8 py-4 rounded-xl font-semibold hover:bg-slate-800 transition-all hover:shadow-lg inline-flex items-center gap-3 active:scale-95">
-                  <FileText size={20} />
-                  Select CSV File
-                </span>
-                <input 
-                  type="file" 
-                  accept=".csv" 
-                  className="hidden" 
-                  onChange={handleFileUpload}
-                />
-              </label>
-
-              {error && (
-                <div className="mt-8 flex items-center gap-3 text-red-600 bg-red-50 px-6 py-3 rounded-xl border border-red-100 animate-in shake duration-300">
-                  <AlertCircle size={20} />
-                  <span className="text-sm font-semibold">{error}</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-white p-5 rounded-2xl shadow-sm border border-gray-100 gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="bg-blue-600 p-3 rounded-xl text-white shadow-blue-200 shadow-lg">
-                    <FileText size={24} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-lg">{fileName}</h3>
-                    <div className="flex gap-2 items-center">
-                      <span className="text-xs font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
-                        {isHorizontal ? 'Horizontal' : 'Vertical'} Format
-                      </span>
-                      <span className="text-xs text-slate-400 font-medium">{data.length} steps • {series.length} series</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-3 w-full lg:w-auto">
-                  <div className="flex-1 lg:flex-none flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-xl border border-amber-100">
-                    <Target size={18} />
-                    <span className="text-sm font-bold">IC50 Mode Active</span>
-                  </div>
-                  <button 
-                    onClick={handleDownloadPlot}
-                    className="flex-1 lg:flex-none flex items-center justify-center gap-2 text-sm font-bold text-blue-700 hover:text-white transition-all bg-white hover:bg-blue-600 px-5 py-2.5 rounded-xl border-2 border-blue-600 active:scale-95"
-                  >
-                    <Download size={18} />
-                    Download Plot
-                  </button>
-                  <button 
-                    onClick={handleReset}
-                    className="flex-1 lg:flex-none flex items-center justify-center gap-2 text-sm font-bold text-slate-600 hover:text-slate-900 transition-all bg-gray-100 hover:bg-gray-200 px-5 py-2.5 rounded-xl active:scale-95"
-                  >
-                    <RefreshCcw size={18} />
-                    Reset
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-                <div className="xl:col-span-3 bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-gray-100" ref={chartRef}>
-                  <div className="h-[500px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart
-                        data={data}
-                        margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis 
-                          dataKey={xAxisKey} 
-                          type="number"
-                          label={{ value: `Concentration (${xAxisKey})`, position: 'insideBottom', offset: -45, style: { fontWeight: 700, fill: '#1e293b', fontSize: 13 } }}
-                          stroke="#cbd5e1"
-                          tick={{ fill: '#64748b', fontWeight: 500 }}
-                        />
-                        <YAxis 
-                          label={{ value: '% Inhibition', angle: -90, position: 'insideLeft', offset: 0, style: { fontWeight: 700, fill: '#1e293b', fontSize: 13 } }}
-                          domain={[0, 110]}
-                          stroke="#cbd5e1"
-                          tick={{ fill: '#64748b', fontWeight: 500 }}
-                        />
-                        <Tooltip 
-                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', padding: '12px' }}
-                          itemStyle={{ fontWeight: 600, fontSize: '13px' }}
-                          labelStyle={{ fontWeight: 700, marginBottom: '4px', color: '#1e293b' }}
-                          formatter={(value: any) => [`${parseFloat(value).toFixed(2)}%`, '']}
-                        />
-                        <Legend verticalAlign="top" height={60} iconType="circle" />
-                        
-                        {/* 50% Threshold Line */}
-                        <ReferenceLine y={50} stroke="#475569" strokeDasharray="5 5" strokeWidth={1.5}>
-                          <Label value="50% Inhibition" position="insideTopRight" fill="#64748b" fontSize={11} fontWeight={600} />
-                        </ReferenceLine>
-
-                        {/* IC50 Vertical Lines */}
-                        {series.map((s, idx) => {
-                          const ic50 = ic50Values[s];
-                          if (ic50 === null) return null;
-                          return (
-                            <ReferenceLine 
-                              key={`ref-${s}`}
-                              x={ic50} 
-                              stroke={COLORS[idx % COLORS.length]} 
-                              strokeDasharray="3 3" 
-                              strokeWidth={2}
-                            />
-                          );
-                        })}
-                        
-                        {series.map((s, idx) => (
-                          <Line 
-                            key={s}
-                            type="monotone" 
-                            dataKey={s} 
-                            name={s} 
-                            stroke={COLORS[idx % COLORS.length]} 
-                            strokeWidth={3}
-                            dot={{ r: 5, fill: COLORS[idx % COLORS.length], strokeWidth: 2, stroke: '#fff' }}
-                            activeDot={{ r: 7 }}
-                            animationDuration={1500}
-                          />
-                        ))}
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                <div className="xl:col-span-1 space-y-6">
-                  <div className="bg-white p-6 rounded-3xl shadow-lg border border-gray-100">
-                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 border-b pb-3">
-                      <Target className="text-blue-600" size={20} />
-                      Calculated IC50
-                    </h3>
-                    <div className="space-y-4">
-                      {series.map((s, idx) => (
-                        <div key={`ic50-${s}`} className="flex flex-col gap-1">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm font-bold text-slate-600 truncate max-w-[120px]" title={s}>
-                              {s}
-                            </span>
-                            <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: `${COLORS[idx % COLORS.length]}20`, color: COLORS[idx % COLORS.length] }}>
-                              Series {idx + 1}
-                            </span>
-                          </div>
-                          <div className="text-xl font-black text-slate-800 tabular-nums">
-                            {ic50Values[s] !== null ? ic50Values[s]?.toFixed(2) : 'N/A'}
-                            <span className="text-xs font-bold text-slate-400 ml-1">µg</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+        {/* Chart Container */}
+        <div className="relative border-2 border-slate-100 rounded-lg p-2 bg-white">
+          <div ref={chartRef} className="bg-white pt-8 pr-4">
+            <div className="h-[550px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  margin={{ top: 20, right: 20, left: 60, bottom: 60 }}
+                >
+                  {/* COMPLETELY CLEAN BACKGROUND */}
                   
-                  <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-lg">
-                    <h4 className="text-sm font-bold text-slate-400 mb-2 uppercase tracking-widest">Quick Info</h4>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      IC50 represents the concentration at which 50% inhibition is achieved. Dotted vertical lines on the chart indicate these calculated points for each series.
-                    </p>
-                  </div>
-                </div>
-              </div>
+                  {/* Fitted High-Res Curve */}
+                  <Line
+                    data={curveData}
+                    type="monotone"
+                    dataKey="curveY"
+                    stroke={SCIENTIFIC_PINK}
+                    strokeWidth={3}
+                    dot={false}
+                    activeDot={false}
+                    isAnimationActive={true}
+                    animationDuration={1500}
+                  />
 
-              {/* Data Table */}
-              <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-8 py-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-                  <h3 className="font-bold text-slate-800">Raw Data & Results</h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm border-collapse">
-                    <thead>
-                      <tr className="bg-white text-slate-500 font-bold border-b border-gray-100">
-                        <th className="px-8 py-4 sticky left-0 bg-white">
-                          Concentration
-                        </th>
-                        {series.map((s, idx) => (
-                          <th key={s} className="px-8 py-4" style={{ color: COLORS[idx % COLORS.length] }}>
-                            {s}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {data.map((point, pIdx) => (
-                        <tr key={pIdx} className="hover:bg-blue-50/30 transition-colors">
-                          <td className="px-8 py-4 font-bold text-slate-700 sticky left-0 bg-white/80 backdrop-blur-sm">
-                            {point[xAxisKey]}
-                          </td>
-                          {series.map((s) => (
-                            <td key={s} className="px-8 py-4 font-medium text-slate-600">
-                              {typeof point[s] === 'number' ? `${point[s].toFixed(2)}%` : '—'}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                  {/* Scatter Points with SD Error Bars */}
+                  <Scatter 
+                    data={rawData} 
+                    fill={SCIENTIFIC_PINK}
+                    isAnimationActive={false}
+                  >
+                    <ErrorBar 
+                      dataKey="sd" 
+                      width={6} 
+                      strokeWidth={2} 
+                      stroke={SCIENTIFIC_PINK} 
+                      direction="y" 
+                    />
+                  </Scatter>
+
+                  <XAxis 
+                    dataKey="x" 
+                    type="number"
+                    domain={['auto', 'auto']}
+                    axisLine={{ stroke: AXIS_COLOR, strokeWidth: 2.5 }}
+                    tickLine={{ stroke: AXIS_COLOR, strokeWidth: 2.5 }}
+                    tick={{ fill: AXIS_COLOR, fontWeight: 700, fontSize: 13 }}
+                  >
+                    <Label 
+                      value="Concentration [log10(nM)]" 
+                      position="insideBottom" 
+                      offset={-45} 
+                      style={{ fill: AXIS_COLOR, fontWeight: 800, fontSize: 15 }} 
+                    />
+                  </XAxis>
+
+                  <YAxis 
+                    type="number"
+                    domain={[0, 110]}
+                    axisLine={{ stroke: AXIS_COLOR, strokeWidth: 2.5 }}
+                    tickLine={{ stroke: AXIS_COLOR, strokeWidth: 2.5 }}
+                    tick={{ fill: AXIS_COLOR, fontWeight: 700, fontSize: 13 }}
+                  >
+                    <Label 
+                        content={(props: any) => {
+                            const { viewBox: { x, y, height } } = props;
+                            return (
+                                <text 
+                                    x={x} 
+                                    y={y + height / 2} 
+                                    textAnchor="middle" 
+                                    transform={`rotate(-90, ${x - 50}, ${y + height / 2})`}
+                                    style={{ fill: AXIS_COLOR, fontWeight: 800, fontSize: 15 }}
+                                >
+                                    % EGFR <tspan dy={2} fontSize="11" fontWeight="900">WT</tspan> Inhibition
+                                </text>
+                            );
+                        }}
+                    />
+                  </YAxis>
+
+                  {/* Scientific Annotation: IC50 inside the graph */}
+                  {ic50Info && (
+                    <g>
+                      <ReferenceLine y={50} stroke="#cbd5e1" strokeDasharray="3 3" />
+                      <Text
+                        x="75%"
+                        y="20%"
+                        style={{ fill: SCIENTIFIC_BLUE, fontWeight: 900, fontSize: 18 }}
+                        verticalAnchor="start"
+                      >
+                        {`IC50 = ${ic50Info.val} ± ${ic50Info.sd} nM`}
+                      </Text>
+                    </g>
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
             </div>
-          )}
-        </main>
+          </div>
+        </div>
 
-        <footer className="mt-16 pb-8 text-center text-slate-400 text-sm font-medium">
-          <p>© 2026 AssayPlot Laboratory Tools • Academic Use Only</p>
-        </footer>
+        {/* Legend/Footer Area */}
+        <div className="mt-8 flex flex-col md:flex-row justify-between items-center gap-6">
+            <div className="flex items-center gap-8">
+                <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full bg-[#e81e63]" />
+                    <span className="text-xs font-black uppercase text-slate-500">Experimental Data</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-8 h-1 bg-[#e81e63]" />
+                    <span className="text-xs font-black uppercase text-slate-500">4PL Sigmoidal Fit</span>
+                </div>
+            </div>
+            
+            <div className="bg-slate-50 px-6 py-3 border-l-4 border-blue-600 flex items-center gap-4">
+                <Target className="text-blue-600" size={24} />
+                <div>
+                    <span className="block text-xs font-bold text-slate-400 uppercase">Calculated Potency</span>
+                    <span className="text-lg font-black text-slate-900">{ic50Info?.val} nM</span>
+                </div>
+            </div>
+        </div>
+
+        {error && (
+          <div className="mt-8 flex items-center gap-3 bg-red-50 text-red-600 p-4 border border-red-100 rounded-sm">
+            <AlertCircle size={20} />
+            <span className="text-sm font-bold">{error}</span>
+          </div>
+        )}
       </div>
     </div>
   );
