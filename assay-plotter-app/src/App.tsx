@@ -44,6 +44,8 @@ const App: React.FC = () => {
   const [rawData, setRawData] = useState<any[]>(MOCK_DATA);
   const [, setFileName] = useState<string | null>("publication_data_template.csv");
   const [error, setError] = useState<string | null>(null);
+  const [yAxisLabel, setYAxisLabel] = useState<string>("% EGFR WT Inhibition");
+  const [xAxisLabel, setXAxisLabel] = useState<string>("Concentration [log10(nM)]");
   const chartRef = useRef<HTMLDivElement>(null);
 
   // --- MATHEMATICAL FITTING & CURVE GENERATION ---
@@ -145,6 +147,30 @@ const App: React.FC = () => {
           </div>
         </header>
 
+        {/* Configuration Controls */}
+        <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 p-6 rounded-lg border border-slate-200">
+          <div>
+            <label className="block text-xs font-black uppercase text-slate-400 mb-2">Y-Axis Label</label>
+            <input 
+              type="text" 
+              value={yAxisLabel} 
+              onChange={(e) => setYAxisLabel(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 px-4 py-2 rounded-sm text-sm font-bold focus:border-black outline-none transition-all"
+              placeholder="e.g. % Inhibition"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-black uppercase text-slate-400 mb-2">X-Axis Label</label>
+            <input 
+              type="text" 
+              value={xAxisLabel} 
+              onChange={(e) => setXAxisLabel(e.target.value)}
+              className="w-full bg-white border-2 border-slate-200 px-4 py-2 rounded-sm text-sm font-bold focus:border-black outline-none transition-all"
+              placeholder="e.g. Concentration [log10(nM)]"
+            />
+          </div>
+        </div>
+
         {/* Chart Container */}
         <div className="relative border-2 border-slate-100 rounded-lg p-2 bg-white">
           <div ref={chartRef} className="bg-white pt-8 pr-4">
@@ -168,16 +194,19 @@ const App: React.FC = () => {
                     animationDuration={1500}
                   />
 
-                  {/* Scatter Points with SD Error Bars */}
                   <Scatter 
                     data={rawData} 
                     fill={SCIENTIFIC_PINK}
+                    stroke="#ffffff"
+                    strokeWidth={1}
+                    line={false}
+                    shape="circle"
                     isAnimationActive={false}
                   >
                     <ErrorBar 
                       dataKey="sd" 
-                      width={6} 
-                      strokeWidth={2} 
+                      width={10} 
+                      strokeWidth={2.5} 
                       stroke={SCIENTIFIC_PINK} 
                       direction="y" 
                     />
@@ -192,7 +221,7 @@ const App: React.FC = () => {
                     tick={{ fill: AXIS_COLOR, fontWeight: 700, fontSize: 13 }}
                   >
                     <Label 
-                      value="Concentration [log10(nM)]" 
+                      value={xAxisLabel} 
                       position="insideBottom" 
                       offset={-45} 
                       style={{ fill: AXIS_COLOR, fontWeight: 800, fontSize: 15 }} 
@@ -217,7 +246,7 @@ const App: React.FC = () => {
                                     transform={`rotate(-90, ${x - 50}, ${y + height / 2})`}
                                     style={{ fill: AXIS_COLOR, fontWeight: 800, fontSize: 15 }}
                                 >
-                                    % EGFR <tspan dy={2} fontSize="11" fontWeight="900">WT</tspan> Inhibition
+                                    {yAxisLabel}
                                 </text>
                             );
                         }}
@@ -227,11 +256,12 @@ const App: React.FC = () => {
                   {/* Scientific Annotation: IC50 inside the graph */}
                   {ic50Info && (
                     <g>
-                      <ReferenceLine y={50} stroke="#cbd5e1" strokeDasharray="3 3" />
+                      <ReferenceLine y={50} stroke="#cbd5e1" strokeDasharray="5 5" strokeWidth={2} />
+                      <ReferenceLine x={Math.log10(parseFloat(ic50Info.val))} stroke={SCIENTIFIC_BLUE} strokeDasharray="5 5" strokeWidth={2} />
                       <Text
                         x="75%"
-                        y="20%"
-                        style={{ fill: SCIENTIFIC_BLUE, fontWeight: 900, fontSize: 18 }}
+                        y="15%"
+                        style={{ fill: SCIENTIFIC_BLUE, fontWeight: 900, fontSize: 20 }}
                         verticalAnchor="start"
                       >
                         {`IC50 = ${ic50Info.val} ± ${ic50Info.sd} nM`}

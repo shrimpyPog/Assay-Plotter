@@ -27,7 +27,7 @@ def calculate_ic50(x_data, y_data):
     except:
         return None, None
 
-def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
+def generate_assay_plot(csv_path='assay_results.csv', output_path=None, y_label='% Inhibition', x_label='Concentration'):
     """
     Generates a line-and-scatter plot with highly visible IC50 analysis.
     Supports both horizontal (compound-based) and vertical (standard) CSV formats.
@@ -85,7 +85,7 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
                         ax.plot(x_smooth, spline(x_smooth), color=color, label=name, linewidth=2, alpha=0.7, zorder=4)
                     except:
                         ax.plot(x_numeric, y_val, color=color, label=name, linewidth=2, alpha=0.7, zorder=4)  
-            plt.xlabel('Concentration', fontweight='bold')
+            plt.xlabel(x_label, fontweight='bold')
 
         else:
             # Vertical Format
@@ -116,7 +116,7 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
                     except:
                         ax.plot(x_data, y_data, color=color, label=label, linewidth=2, alpha=0.7, zorder=4)
             
-            plt.xlabel(f'Concentration ({col_x})', fontweight='bold')
+            plt.xlabel(f'{x_label} ({col_x})', fontweight='bold')
 
         # ENHANCED VISIBILITY FOR IC50 LINES
         ax.axhline(50, color='black', linestyle='--', linewidth=1.5, alpha=0.5, zorder=1)
@@ -138,7 +138,7 @@ def generate_assay_plot(csv_path='assay_results.csv', output_path=None):
                     verticalalignment='bottom', horizontalalignment='right', family='monospace')
 
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True, shadow=True, borderpad=1)        
-        plt.ylabel('% Inhibition', fontweight='bold')
+        plt.ylabel(y_label, fontweight='bold')
         plt.title('Assay Dose-Response Analysis', fontweight='bold', pad=25, fontsize=16)
         plt.ylim(y_limit_bottom, y_limit_top)
 
